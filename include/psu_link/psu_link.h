@@ -27,6 +27,24 @@
 //
 //   <caps> 與 <flags> 以十六進位寫（caps 4 位、flags 2 位），其餘欄位十進位。
 //   ST 在待機時照樣送 —— 它同時是心跳，沒有另外的 HB 訊息。
+//
+// ── 配對與連線驗證（ESP-NOW 用；UART 是實體線，不需要）──────────────────────
+//
+//   位元組欄位一律寫成大寫十六進位、長度固定（32 位元組 = 64 字元）。
+//   <role>：0 = 控制板、1 = 電源節點。流程與金鑰推導見 psu_pair.h、psu_sess.h。
+//
+//   $PKH,<ver>,<role>,<pk>      公鑰（X25519，32 B）。節點廣播，控制板單播回覆
+//   $PCM,<c>                    節點對自己亂數的承諾值（16 B）
+//   $PNC,<role>,<n>             亂數（16 B）。控制板先送，節點收到後才送自己的
+//   $PCF,<role>,<tag>           使用者按了確認 + 金鑰確認值（16 B）
+//   $PRJ,<role>,<reason>        取消配對（psu_pair_fail_t）
+//   $SH1,<n>                    控制板 → 節點：開始連線握手
+//   $SH2,<n>,<tag>              節點 → 控制板：握手回應
+//   $SH3,<tag>                  控制板 → 節點：握手完成
+//   $SHR                        節點 → 控制板：請重新握手（節點重開機、失去連線金鑰）
+//
+//   握手完成後，其餘訊息在 ESP-NOW 上都必須帶驗證尾碼（見 psu_sess.h）：
+//     $ST,...*<CRC16>~<計數器 8 hex><驗證碼 16 hex>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -38,6 +56,14 @@ extern "C" {
 
 #define PSU_LINK_PROTO_VER   2u     // 1 = 舊的 "V=..,I=.." / "HB" / "SET:V=" 文字協定
 #define PSU_LINK_MAX_LINE    96u    // 含 '\n' 與結尾 NUL 的緩衝區大小上限
+#define PSU_LINK_MAX_AUTH_LINE (PSU_LINK_MAX_LINE + 26u)   // 加上 "~<8 hex><16 hex>" 驗證尾碼
+
+#define PSU_KEY_LEN    32u   // X25519 公鑰、長期金鑰
+#define PSU_NONCE_LEN  16u
+#define PSU_TAG_LEN    16u
+
+#define PSU_ROLE_CONTROLLER  0u
+#define PSU_ROLE_NODE        1u
 
 // ─── 節點類型 ────────────────────────────────────────────────────────────────
 typedef enum {
@@ -83,6 +109,15 @@ typedef enum {
     PSU_MSG_STATUS = 3,
     PSU_MSG_SET    = 4,
     PSU_MSG_ACK    = 5,
+    PSU_MSG_PAIR_KEY     = 6,    // PKH
+    PSU_MSG_PAIR_COMMIT  = 7,    // PCM
+    PSU_MSG_PAIR_NONCE   = 8,    // PNC
+    PSU_MSG_PAIR_CONFIRM = 9,    // PCF
+    PSU_MSG_PAIR_REJECT  = 10,   // PRJ
+    PSU_MSG_SESS_INIT    = 11,   // SH1
+    PSU_MSG_SESS_REPLY   = 12,   // SH2
+    PSU_MSG_SESS_FINISH  = 13,   // SH3
+    PSU_MSG_SESS_REQUEST = 14,   // SHR
 } psu_msg_type_t;
 
 typedef struct {
@@ -119,6 +154,15 @@ typedef struct {
     uint8_t  result;        // psu_ack_result_t
 } psu_msg_ack_t;
 
+typedef struct { uint8_t proto_ver; uint8_t role; uint8_t pk[PSU_KEY_LEN]; } psu_msg_pair_key_t;
+typedef struct { uint8_t c[PSU_TAG_LEN]; }                                 psu_msg_pair_commit_t;
+typedef struct { uint8_t role; uint8_t n[PSU_NONCE_LEN]; }                 psu_msg_pair_nonce_t;
+typedef struct { uint8_t role; uint8_t tag[PSU_TAG_LEN]; }                 psu_msg_pair_confirm_t;
+typedef struct { uint8_t role; uint8_t reason; }                           psu_msg_pair_reject_t;
+typedef struct { uint8_t n[PSU_NONCE_LEN]; }                               psu_msg_sess_init_t;
+typedef struct { uint8_t n[PSU_NONCE_LEN]; uint8_t tag[PSU_TAG_LEN]; }     psu_msg_sess_reply_t;
+typedef struct { uint8_t tag[PSU_TAG_LEN]; }                               psu_msg_sess_finish_t;
+
 typedef struct {
     psu_msg_type_t type;
     union {
@@ -127,6 +171,14 @@ typedef struct {
         psu_msg_status_t status;
         psu_msg_set_t    set;
         psu_msg_ack_t    ack;
+        psu_msg_pair_key_t     pair_key;
+        psu_msg_pair_commit_t  pair_commit;
+        psu_msg_pair_nonce_t   pair_nonce;
+        psu_msg_pair_confirm_t pair_confirm;
+        psu_msg_pair_reject_t  pair_reject;
+        psu_msg_sess_init_t    sess_init;
+        psu_msg_sess_reply_t   sess_reply;
+        psu_msg_sess_finish_t  sess_finish;
     } u;
 } psu_msg_t;
 

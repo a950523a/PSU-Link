@@ -61,6 +61,11 @@ static void put_hex(writer_t *w, uint32_t v, int digits)
     for (int i = digits - 1; i >= 0; i--) put_char(w, HEX[(v >> (i * 4)) & 0xFu]);
 }
 
+static void put_bytes(writer_t *w, const uint8_t *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++) put_hex(w, b[i], 2);
+}
+
 size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
 {
     if (!msg || !buf || buf_size < 2) return 0;
@@ -102,6 +107,47 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_str(&w, "ACK,");
         put_uint(&w, msg->u.ack.seq);        put_char(&w, ',');
         put_uint(&w, msg->u.ack.result);
+        break;
+    case PSU_MSG_PAIR_KEY:
+        put_str(&w, "PKH,");
+        put_uint(&w, msg->u.pair_key.proto_ver); put_char(&w, ',');
+        put_uint(&w, msg->u.pair_key.role);      put_char(&w, ',');
+        put_bytes(&w, msg->u.pair_key.pk, PSU_KEY_LEN);
+        break;
+    case PSU_MSG_PAIR_COMMIT:
+        put_str(&w, "PCM,");
+        put_bytes(&w, msg->u.pair_commit.c, PSU_TAG_LEN);
+        break;
+    case PSU_MSG_PAIR_NONCE:
+        put_str(&w, "PNC,");
+        put_uint(&w, msg->u.pair_nonce.role);    put_char(&w, ',');
+        put_bytes(&w, msg->u.pair_nonce.n, PSU_NONCE_LEN);
+        break;
+    case PSU_MSG_PAIR_CONFIRM:
+        put_str(&w, "PCF,");
+        put_uint(&w, msg->u.pair_confirm.role);  put_char(&w, ',');
+        put_bytes(&w, msg->u.pair_confirm.tag, PSU_TAG_LEN);
+        break;
+    case PSU_MSG_PAIR_REJECT:
+        put_str(&w, "PRJ,");
+        put_uint(&w, msg->u.pair_reject.role);   put_char(&w, ',');
+        put_uint(&w, msg->u.pair_reject.reason);
+        break;
+    case PSU_MSG_SESS_INIT:
+        put_str(&w, "SH1,");
+        put_bytes(&w, msg->u.sess_init.n, PSU_NONCE_LEN);
+        break;
+    case PSU_MSG_SESS_REPLY:
+        put_str(&w, "SH2,");
+        put_bytes(&w, msg->u.sess_reply.n, PSU_NONCE_LEN);   put_char(&w, ',');
+        put_bytes(&w, msg->u.sess_reply.tag, PSU_TAG_LEN);
+        break;
+    case PSU_MSG_SESS_FINISH:
+        put_str(&w, "SH3,");
+        put_bytes(&w, msg->u.sess_finish.tag, PSU_TAG_LEN);
+        break;
+    case PSU_MSG_SESS_REQUEST:
+        put_str(&w, "SHR");
         break;
     default:
         return 0;
@@ -152,7 +198,8 @@ static bool parse_uint(const field_t *f, uint32_t max, uint32_t *out)
         char c = f->p[i];
         if (c < '0' || c > '9') return false;
         uint32_t d = (uint32_t)(c - '0');
-        if (v > (max - d) / 10u) return false;   // 超過 max
+        // 超過 max。先比 d：max 小於 9 時 (max - d) 會無號下溢，讓任何值都通過
+        if (d > max || v > (max - d) / 10u) return false;
         v = v * 10u + d;
     }
     *out = v;
@@ -184,6 +231,26 @@ static bool parse_hex_field(const field_t *f, size_t max_digits, uint32_t *out)
         v = (v << 4) | (uint32_t)h;
     }
     *out = v;
+    return true;
+}
+
+// 固定長度的位元組欄位（2n 個十六進位字元，大小寫皆可）
+static bool parse_bytes(const field_t *f, uint8_t *out, size_t n)
+{
+    if (f->n != 2 * n) return false;
+    for (size_t i = 0; i < n; i++) {
+        int hi = hex_val(f->p[2 * i]), lo = hex_val(f->p[2 * i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return true;
+}
+
+static bool parse_role(const field_t *f, uint8_t *role)
+{
+    uint32_t r;
+    if (!parse_uint(f, 1u, &r)) return false;
+    *role = (uint8_t)r;
     return true;
 }
 
@@ -282,6 +349,58 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
         out->type = PSU_MSG_ACK;
         out->u.ack.seq    = (uint16_t)a;
         out->u.ack.result = (uint8_t)b;
+
+    } else if (tok_eq(&f[0], "PKH")) {
+        if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||
+            !parse_role(&f[2], &out->u.pair_key.role) ||
+            !parse_bytes(&f[3], out->u.pair_key.pk, PSU_KEY_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.pair_key.proto_ver = (uint8_t)a;
+        out->type = PSU_MSG_PAIR_KEY;
+
+    } else if (tok_eq(&f[0], "PCM")) {
+        if (nf != 2 || !parse_bytes(&f[1], out->u.pair_commit.c, PSU_TAG_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_PAIR_COMMIT;
+
+    } else if (tok_eq(&f[0], "PNC")) {
+        if (nf != 3 || !parse_role(&f[1], &out->u.pair_nonce.role) ||
+            !parse_bytes(&f[2], out->u.pair_nonce.n, PSU_NONCE_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_PAIR_NONCE;
+
+    } else if (tok_eq(&f[0], "PCF")) {
+        if (nf != 3 || !parse_role(&f[1], &out->u.pair_confirm.role) ||
+            !parse_bytes(&f[2], out->u.pair_confirm.tag, PSU_TAG_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_PAIR_CONFIRM;
+
+    } else if (tok_eq(&f[0], "PRJ")) {
+        if (nf != 3 || !parse_role(&f[1], &out->u.pair_reject.role) ||
+            !parse_uint(&f[2], 255u, &a))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.pair_reject.reason = (uint8_t)a;
+        out->type = PSU_MSG_PAIR_REJECT;
+
+    } else if (tok_eq(&f[0], "SH1")) {
+        if (nf != 2 || !parse_bytes(&f[1], out->u.sess_init.n, PSU_NONCE_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_SESS_INIT;
+
+    } else if (tok_eq(&f[0], "SH2")) {
+        if (nf != 3 || !parse_bytes(&f[1], out->u.sess_reply.n, PSU_NONCE_LEN) ||
+            !parse_bytes(&f[2], out->u.sess_reply.tag, PSU_TAG_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_SESS_REPLY;
+
+    } else if (tok_eq(&f[0], "SH3")) {
+        if (nf != 2 || !parse_bytes(&f[1], out->u.sess_finish.tag, PSU_TAG_LEN))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_SESS_FINISH;
+
+    } else if (tok_eq(&f[0], "SHR")) {
+        if (nf != 1) return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_SESS_REQUEST;
 
     } else {
         return PSU_LINK_BAD_TYPE;
