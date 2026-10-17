@@ -35,6 +35,13 @@ $<TYPE>,<field>,...*<CRC16>\n
 | node → controller | `$ST,<seq>,<v>,<i>,<mode>,<flags>` | Status; every 100 ms while outputting, every 1 s idle. Doubles as the heartbeat |
 | controller → node | `$SET,<seq>,<v>,<i>` | Setpoints; leave `<v>` or `<i>` empty to leave it unchanged |
 | node → controller | `$ACK,<seq>,<result>` | Answer to `SET` |
+| node → controller | `$PWR,<vac>,<pmax>,<ilim>,<src>` | AC input and the power the node can deliver now (sent on change, on `HELO` and every 30 s; declared by `PSU_CAP_REPORT_PWR`) |
+
+`PWR` units: `<vac>` 0.1 V, `<pmax>` W of DC output, `<ilim>` 0.1 A on the AC side, 0 = unknown.
+`<src>` says where `<ilim>` comes from: 0 unknown, 1 a wall outlet (the user's setting on the
+node), 2 an AC charging station (J1772 / Type-2 pilot — reserved for a node that reads it).
+The node works `<pmax>` out itself — it knows its module's derating and its AC source — so a
+controller only has to keep `current × voltage` under it, without knowing the node's model.
 
 Example: `$ST,7,4820,1050,3,07*2735` — 48.20 V, 10.50 A, constant-current, voltage and
 current valid, output on.

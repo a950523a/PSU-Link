@@ -102,6 +102,30 @@ static void test_roundtrip(void)
     CHECK(out.type == PSU_MSG_ACK && out.u.ack.seq == 42 && out.u.ack.result == PSU_ACK_RANGE);
 }
 
+static void test_power(void)
+{
+    char buf[PSU_LINK_MAX_LINE], expect[64];
+    psu_msg_t in = { .type = PSU_MSG_POWER }, out;
+    in.u.power = (psu_msg_power_t){ .vac_dv = 2205, .pmax_w = 3069, .ilim_da = 150, .src = PSU_AC_SRC_OUTLET };
+    size_t n = psu_link_encode(&in, buf, sizeof buf);
+    frame("PWR,2205,3069,150,1", expect, sizeof expect);
+    CHECK(n == strlen(expect) && strcmp(buf, expect) == 0);
+    printf("  golden PWR: %s", buf);
+    CHECK(dec(buf, &out) == PSU_LINK_OK);
+    CHECK(out.type == PSU_MSG_POWER);
+    CHECK(out.u.power.vac_dv == 2205 && out.u.power.pmax_w == 3069);
+    CHECK(out.u.power.ilim_da == 150 && out.u.power.src == PSU_AC_SRC_OUTLET);
+
+    frame("PWR,0,0,0,0", expect, sizeof expect);        // 還沒讀到 AC：全 0 也合法
+    CHECK(dec(expect, &out) == PSU_LINK_OK && out.u.power.pmax_w == 0);
+    frame("PWR,2205,3069,150,3", expect, sizeof expect); // 不認得的來源
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("PWR,2205,3069,150", expect, sizeof expect);   // 少一欄
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("PWR,2205,70000,150,1", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+}
+
 static void test_set_partial(void)
 {
     char buf[PSU_LINK_MAX_LINE];
@@ -218,6 +242,7 @@ int main(void)
 {
     test_crc();
     test_golden();
+    test_power();
     test_roundtrip();
     test_set_partial();
     test_not_frame();

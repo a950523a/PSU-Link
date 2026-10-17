@@ -24,6 +24,12 @@
 //   節點 → 控制板   $ST,<seq>,<v>,<i>,<mode>,<flags>            狀態；輸出中每 100 ms、待機每 1 s
 //   控制板 → 節點   $SET,<seq>,<v>,<i>                          設定值；<v> 或 <i> 可留空表示不變
 //   節點 → 控制板   $ACK,<seq>,<result>                         回應 SET
+//   節點 → 控制板   $PWR,<vac>,<pmax>,<ilim>,<src>              AC 輸入與可用功率（2026-10-17）；有變化時、
+//                                                               回 HELO 時、以及每 30 s 送一次
+//
+//   PWR 的單位：<vac> 0.1 V、<pmax> W（DC 輸出）、<ilim> 0.1 A（AC 端電流上限）。0 = 不知道 / 不限。
+//   <pmax> 由節點自己算：它最清楚自己的模組在這個 AC 電壓下能出多少，也知道 AC 端
+//   （插座、AC 充電樁）能給多少電流。控制板只照 <pmax> 收電流，不必認得節點的型號。
 //
 //   <caps> 與 <flags> 以十六進位寫（caps 4 位、flags 2 位），其餘欄位十進位。
 //   ST 在待機時照樣送 —— 它同時是心跳，沒有另外的 HB 訊息。
@@ -78,6 +84,7 @@ typedef enum {
 #define PSU_CAP_SET_V        (1u << 2)   // 接受 SET 的電壓欄位
 #define PSU_CAP_SET_I        (1u << 3)   // 接受 SET 的電流欄位
 #define PSU_CAP_REPORT_MODE  (1u << 4)   // ST 的 mode 欄位（CV/CC）有意義
+#define PSU_CAP_REPORT_PWR   (1u << 5)   // 節點會送 PWR（AC 輸入電壓、可用功率）
 
 // ─── 輸出模式（ST.mode）─────────────────────────────────────────────────────
 typedef enum {
@@ -93,6 +100,13 @@ typedef enum {
 #define PSU_ST_OUTPUT_ON     (1u << 2)   // 輸出開啟中
 #define PSU_ST_SOFT_START    (1u << 3)   // 軟啟動爬升中
 #define PSU_ST_FAULT         (1u << 4)   // 節點回報異常（細節看節點自己的介面）
+
+// ─── AC 電流上限的來源（PWR.src）───────────────────────────────────────────
+typedef enum {
+    PSU_AC_SRC_UNKNOWN = 0,   // 不知道 AC 端能給多少（只看模組本身）
+    PSU_AC_SRC_OUTLET  = 1,   // 插在一般插座：上限是使用者在節點上的設定
+    PSU_AC_SRC_EVSE    = 2,   // 接在 AC 充電樁（J1772 / Type-2）：上限來自 pilot 訊號
+} psu_ac_src_t;
 
 // ─── ACK 結果碼 ──────────────────────────────────────────────────────────────
 typedef enum {
@@ -118,6 +132,7 @@ typedef enum {
     PSU_MSG_SESS_REPLY   = 12,   // SH2
     PSU_MSG_SESS_FINISH  = 13,   // SH3
     PSU_MSG_SESS_REQUEST = 14,   // SHR
+    PSU_MSG_POWER        = 15,   // PWR
 } psu_msg_type_t;
 
 typedef struct {
@@ -154,6 +169,13 @@ typedef struct {
     uint8_t  result;        // psu_ack_result_t
 } psu_msg_ack_t;
 
+typedef struct {
+    uint16_t vac_dv;        // AC 輸入電壓，0.1 V；0 = 還沒讀到
+    uint16_t pmax_w;        // 節點現在能給的最大 DC 輸出功率，W；0 = 不知道（控制板照舊不限）
+    uint16_t ilim_da;       // AC 端的電流上限，0.1 A；0 = 不知道
+    uint8_t  src;           // psu_ac_src_t：ilim 從哪裡來
+} psu_msg_power_t;
+
 typedef struct { uint8_t proto_ver; uint8_t role; uint8_t pk[PSU_KEY_LEN]; } psu_msg_pair_key_t;
 typedef struct { uint8_t c[PSU_TAG_LEN]; }                                 psu_msg_pair_commit_t;
 typedef struct { uint8_t role; uint8_t n[PSU_NONCE_LEN]; }                 psu_msg_pair_nonce_t;
@@ -171,6 +193,7 @@ typedef struct {
         psu_msg_status_t status;
         psu_msg_set_t    set;
         psu_msg_ack_t    ack;
+        psu_msg_power_t  power;
         psu_msg_pair_key_t     pair_key;
         psu_msg_pair_commit_t  pair_commit;
         psu_msg_pair_nonce_t   pair_nonce;

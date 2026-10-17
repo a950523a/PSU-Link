@@ -108,6 +108,13 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_uint(&w, msg->u.ack.seq);        put_char(&w, ',');
         put_uint(&w, msg->u.ack.result);
         break;
+    case PSU_MSG_POWER:
+        put_str(&w, "PWR,");
+        put_uint(&w, msg->u.power.vac_dv);   put_char(&w, ',');
+        put_uint(&w, msg->u.power.pmax_w);   put_char(&w, ',');
+        put_uint(&w, msg->u.power.ilim_da);  put_char(&w, ',');
+        put_uint(&w, msg->u.power.src);
+        break;
     case PSU_MSG_PAIR_KEY:
         put_str(&w, "PKH,");
         put_uint(&w, msg->u.pair_key.proto_ver); put_char(&w, ',');
@@ -349,6 +356,17 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
         out->type = PSU_MSG_ACK;
         out->u.ack.seq    = (uint16_t)a;
         out->u.ack.result = (uint8_t)b;
+
+    } else if (tok_eq(&f[0], "PWR")) {
+        if (nf != 5 ||
+            !parse_uint(&f[1], 65535u, &a) || !parse_uint(&f[2], 65535u, &b) ||
+            !parse_uint(&f[3], 65535u, &c) || !parse_uint(&f[4], PSU_AC_SRC_EVSE, &d))
+            return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_POWER;
+        out->u.power.vac_dv  = (uint16_t)a;
+        out->u.power.pmax_w  = (uint16_t)b;
+        out->u.power.ilim_da = (uint16_t)c;
+        out->u.power.src     = (uint8_t)d;
 
     } else if (tok_eq(&f[0], "PKH")) {
         if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||
