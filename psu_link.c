@@ -115,6 +115,11 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_uint(&w, msg->u.power.ilim_da);  put_char(&w, ',');
         put_uint(&w, msg->u.power.src);
         break;
+    case PSU_MSG_CHANNEL:
+        if (msg->u.channel.channel < 1 || msg->u.channel.channel > 14) return 0;
+        put_str(&w, "CHN,");
+        put_uint(&w, msg->u.channel.channel);
+        break;
     case PSU_MSG_PAIR_KEY:
         put_str(&w, "PKH,");
         put_uint(&w, msg->u.pair_key.proto_ver); put_char(&w, ',');
@@ -367,6 +372,11 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
         out->u.power.pmax_w  = (uint16_t)b;
         out->u.power.ilim_da = (uint16_t)c;
         out->u.power.src     = (uint8_t)d;
+
+    } else if (tok_eq(&f[0], "CHN")) {
+        if (nf != 2 || !parse_uint(&f[1], 14u, &a) || a < 1) return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_CHANNEL;
+        out->u.channel.channel = (uint8_t)a;
 
     } else if (tok_eq(&f[0], "PKH")) {
         if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||

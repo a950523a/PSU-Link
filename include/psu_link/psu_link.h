@@ -27,6 +27,13 @@
 //   節點 → 控制板   $PWR,<vac>,<pmax>,<ilim>,<src>              AC 輸入與可用功率（2026-10-17）；有變化時、
 //                                                               回 HELO 時、以及每 30 s 送一次
 //
+//   控制板 → 節點   $CHN,<ch>                                   控制板目前的 WiFi 頻道（2026-10-18，ESP-NOW 用）；
+//                                                               連線後與每 5 s 送一次，節點不在這個頻道就切過去
+//
+//   CHN：ESP-NOW 只收得到同一個頻道的封包，但隔壁頻道會漏過來一部分 —— 節點停在 8、控制板在 9 時，
+//   握手照樣成功、之後時通時斷，節點的「連續送不出去才重找」也一直被偶爾的成功歸零。
+//   由控制板直接說它在哪個頻道，節點就不用猜。跟其他一般訊息一樣帶驗證尾碼，偽造不了。
+//
 //   PWR 的單位：<vac> 0.1 V、<pmax> W（DC 輸出）、<ilim> 0.1 A（AC 端電流上限）。0 = 不知道 / 不限。
 //   <pmax> 由節點自己算：它最清楚自己的模組在這個 AC 電壓下能出多少，也知道 AC 端
 //   （插座、AC 充電樁）能給多少電流。控制板只照 <pmax> 收電流，不必認得節點的型號。
@@ -133,6 +140,7 @@ typedef enum {
     PSU_MSG_SESS_FINISH  = 13,   // SH3
     PSU_MSG_SESS_REQUEST = 14,   // SHR
     PSU_MSG_POWER        = 15,   // PWR
+    PSU_MSG_CHANNEL      = 16,   // CHN
 } psu_msg_type_t;
 
 typedef struct {
@@ -170,6 +178,10 @@ typedef struct {
 } psu_msg_ack_t;
 
 typedef struct {
+    uint8_t  channel;       // 1–14
+} psu_msg_channel_t;
+
+typedef struct {
     uint16_t vac_dv;        // AC 輸入電壓，0.1 V；0 = 還沒讀到
     uint16_t pmax_w;        // 節點現在能給的最大 DC 輸出功率，W；0 = 不知道（控制板照舊不限）
     uint16_t ilim_da;       // AC 端的電流上限，0.1 A；0 = 不知道
@@ -194,6 +206,7 @@ typedef struct {
         psu_msg_set_t    set;
         psu_msg_ack_t    ack;
         psu_msg_power_t  power;
+        psu_msg_channel_t channel;
         psu_msg_pair_key_t     pair_key;
         psu_msg_pair_commit_t  pair_commit;
         psu_msg_pair_nonce_t   pair_nonce;

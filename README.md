@@ -37,6 +37,14 @@ $<TYPE>,<field>,...*<CRC16>\n
 | node → controller | `$ACK,<seq>,<result>` | Answer to `SET` |
 | node → controller | `$PWR,<vac>,<pmax>,<ilim>,<src>` | AC input and the power the node can deliver now (sent on change, on `HELO` and every 30 s; declared by `PSU_CAP_REPORT_PWR`) |
 
+| controller → node | `$CHN,<ch>` | The controller's WiFi channel (ESP-NOW only): sent once linked and every 5 s; a node on another channel moves to it |
+
+Why `CHN`: ESP-NOW only hears its own channel, but part of the traffic on an adjacent channel leaks
+through. A node parked on 8 while the controller is on 9 still completes the handshake and then
+works intermittently — and a node that only re-searches after several unanswered sends never
+does, because an occasional send gets through. The controller saying where it is removes the
+guesswork. It is an ordinary message, so on ESP-NOW it carries the authentication tag.
+
 `PWR` units: `<vac>` 0.1 V, `<pmax>` W of DC output, `<ilim>` 0.1 A on the AC side, 0 = unknown.
 `<src>` says where `<ilim>` comes from: 0 unknown, 1 a wall outlet (the user's setting on the
 node), 2 an AC charging station (J1772 / Type-2 pilot — reserved for a node that reads it).

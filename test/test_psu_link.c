@@ -126,6 +126,27 @@ static void test_power(void)
     CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
 }
 
+static void test_channel(void)
+{
+    char buf[PSU_LINK_MAX_LINE], expect[32];
+    psu_msg_t in = { .type = PSU_MSG_CHANNEL }, out;
+    in.u.channel.channel = 9;
+    size_t n = psu_link_encode(&in, buf, sizeof buf);
+    frame("CHN,9", expect, sizeof expect);
+    CHECK(n == strlen(expect) && strcmp(buf, expect) == 0);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_CHANNEL && out.u.channel.channel == 9);
+    in.u.channel.channel = 0;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    in.u.channel.channel = 15;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    frame("CHN,0", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("CHN,15", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("CHN,9,1", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+}
+
 static void test_set_partial(void)
 {
     char buf[PSU_LINK_MAX_LINE];
@@ -243,6 +264,7 @@ int main(void)
     test_crc();
     test_golden();
     test_power();
+    test_channel();
     test_roundtrip();
     test_set_partial();
     test_not_frame();
