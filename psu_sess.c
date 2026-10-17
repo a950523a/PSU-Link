@@ -92,6 +92,17 @@ void psu_sess_rekey(psu_sess_t *s, uint32_t now_ms)
     s->bad_streak    = 0;
 }
 
+void psu_sess_kick(psu_sess_t *s, uint32_t now_ms)
+{
+    if (s->role != PSU_ROLE_NODE) return;
+    if (!s->established || s->bad_streak >= PSU_SESS_BAD_REKEY) s->next_tx_ms = now_ms;
+}
+
+bool psu_sess_handshaking(const psu_sess_t *s)
+{
+    return s->role == PSU_ROLE_NODE && s->pend;
+}
+
 bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms)
 {
     uint8_t expect[PSU_TAG_LEN];
@@ -116,7 +127,11 @@ bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms)
         return true;
 
     case PSU_MSG_SESS_REQUEST:
-        if (s->role == PSU_ROLE_CONTROLLER) psu_sess_rekey(s, now_ms);
+        if (s->role != PSU_ROLE_CONTROLLER) return true;
+        // 握手已經在進行（還沒收到 SH2）：馬上重送同一個 SH1，不等重送間隔 —— 節點正在找頻道，
+        // 剛跳過來喊一聲，越快回它越早停下來。不換 nonce，所以不受重新握手的頻率限制
+        if (s->hs_active) s->next_tx_ms = now_ms;
+        else psu_sess_rekey(s, now_ms);
         return true;
 
     case PSU_MSG_SESS_INIT:

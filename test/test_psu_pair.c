@@ -472,6 +472,33 @@ static void test_session(void)
     CHECK(wl > 0 && psu_sess_unwrap(&s_c, wire, wl, &inner, s_now) == PSU_SESS_OK);
 }
 
+// 2026-10-18：節點跳到新頻道就喊 SHR，控制板握手進行中要馬上重送 SH1
+static void test_sess_kick(void)
+{
+    static const uint8_t ltk[PSU_KEY_LEN] = { 1, 2, 3 };
+    psu_sess_t c, n;
+    psu_msg_t m;
+    psu_sess_init(&c, PSU_ROLE_CONTROLLER, ltk, &CR, 0);
+    psu_sess_init(&n, PSU_ROLE_NODE, ltk, &CR, 0);
+    CHECK(psu_sess_poll(&c, 0, &m) && m.type == PSU_MSG_SESS_INIT);   // 第一個 SH1（節點沒收到）
+    CHECK(!psu_sess_poll(&c, 300, &m));                                // 還沒到 1 s 不重送
+    CHECK(psu_sess_poll(&n, 0, &m) && m.type == PSU_MSG_SESS_REQUEST); // 節點開機的 SHR
+    CHECK(!psu_sess_poll(&n, 300, &m));
+    psu_sess_kick(&n, 300);                                            // 跳到新頻道：馬上喊
+    CHECK(psu_sess_poll(&n, 300, &m) && m.type == PSU_MSG_SESS_REQUEST);
+    psu_sess_rx(&c, &m, 310);                                          // 控制板收到：馬上重送 SH1
+    CHECK(psu_sess_poll(&c, 310, &m) && m.type == PSU_MSG_SESS_INIT);
+    psu_sess_rx(&n, &m, 320);
+    CHECK(psu_sess_handshaking(&n));
+    CHECK(psu_sess_poll(&n, 320, &m) && m.type == PSU_MSG_SESS_REPLY);
+    psu_sess_rx(&c, &m, 330);
+    CHECK(psu_sess_poll(&c, 330, &m) && m.type == PSU_MSG_SESS_FINISH);
+    psu_sess_rx(&n, &m, 340);
+    CHECK(psu_sess_ready(&c) && psu_sess_ready(&n) && !psu_sess_handshaking(&n));
+    psu_sess_kick(&n, 400);                                            // 連著時 kick 不送 SHR
+    CHECK(!psu_sess_poll(&n, 400, &m));
+}
+
 int main(void)
 {
     test_crypto_vectors();
@@ -485,6 +512,7 @@ int main(void)
     test_pair_commit_mismatch();
     test_pair_mitm();
     test_session();
+    test_sess_kick();
     printf("%d passed, %d failed\n", s_pass, s_fail);
     return s_fail ? 1 : 0;
 }

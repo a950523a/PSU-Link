@@ -91,6 +91,14 @@ bool psu_sess_ready(const psu_sess_t *s);
 // 控制板：重新握手（有頻率限制）。節點呼叫無作用。
 void psu_sess_rekey(psu_sess_t *s, uint32_t now_ms);
 
+// 節點：下一次 poll 就送 SHR，不等重送間隔（2026-10-18）。節點跳到新頻道時呼叫：
+// 在每個頻道只要停一下（喊一聲、控制板立刻回 SH1）就知道 TES 在不在，不用停滿 1 s。
+// 控制板呼叫無作用。
+void psu_sess_kick(psu_sess_t *s, uint32_t now_ms);
+
+// 節點：握手進行中（收到 SH1、還在等 SH3）。這時不要換頻道
+bool psu_sess_handshaking(const psu_sess_t *s);
+
 // 餵進解碼後的 PSU_SESS_PLAIN 訊息。是握手訊息就處理並回傳 true。
 bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms);
 
