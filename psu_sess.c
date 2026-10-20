@@ -98,9 +98,10 @@ void psu_sess_kick(psu_sess_t *s, uint32_t now_ms)
     if (!s->established || s->bad_streak >= PSU_SESS_BAD_REKEY) s->next_tx_ms = now_ms;
 }
 
-bool psu_sess_handshaking(const psu_sess_t *s)
+bool psu_sess_handshaking(const psu_sess_t *s, uint32_t now_ms)
 {
-    return s->role == PSU_ROLE_NODE && s->pend;
+    return s->role == PSU_ROLE_NODE && s->pend &&
+           (uint32_t)(now_ms - s->pend_rx_ms) < PSU_SESS_HS_HOLD_MS;
 }
 
 bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms)
@@ -143,6 +144,7 @@ bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms)
             s->pend = true;
         }
         s->send_reply = true;
+        s->pend_rx_ms = now_ms;
         s->next_tx_ms = now_ms + 2u * PSU_SESS_RESEND_MS;   // 握手進行中，先別送 SHR
         return true;
 

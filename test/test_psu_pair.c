@@ -489,12 +489,13 @@ static void test_sess_kick(void)
     psu_sess_rx(&c, &m, 310);                                          // 控制板收到：馬上重送 SH1
     CHECK(psu_sess_poll(&c, 310, &m) && m.type == PSU_MSG_SESS_INIT);
     psu_sess_rx(&n, &m, 320);
-    CHECK(psu_sess_handshaking(&n));
+    CHECK(psu_sess_handshaking(&n, 320));
+    CHECK(!psu_sess_handshaking(&n, 320 + PSU_SESS_HS_HOLD_MS));        // SH3 一直沒來：不能永遠不換頻道
     CHECK(psu_sess_poll(&n, 320, &m) && m.type == PSU_MSG_SESS_REPLY);
     psu_sess_rx(&c, &m, 330);
     CHECK(psu_sess_poll(&c, 330, &m) && m.type == PSU_MSG_SESS_FINISH);
     psu_sess_rx(&n, &m, 340);
-    CHECK(psu_sess_ready(&c) && psu_sess_ready(&n) && !psu_sess_handshaking(&n));
+    CHECK(psu_sess_ready(&c) && psu_sess_ready(&n) && !psu_sess_handshaking(&n, 340));
     psu_sess_kick(&n, 400);                                            // 連著時 kick 不送 SHR
     CHECK(!psu_sess_poll(&n, 400, &m));
 }

@@ -42,6 +42,7 @@ extern "C" {
 #define PSU_SESS_RESEND_MS     1000u   // SH1 / SHR 重送間隔（也是重新握手的最短間隔）
 #define PSU_SESS_BAD_REKEY        3u   // 連續幾則驗不過就重新握手
 #define PSU_SESS_TAG_LEN          8u
+#define PSU_SESS_HS_HOLD_MS     500u   // 節點收到 SH1 後多久內算「握手中」（psu_sess_handshaking）
 
 typedef enum {
     PSU_SESS_OK = 0,        // 驗證通過；原本的一行是 line[0 .. *inner_len)
@@ -78,6 +79,7 @@ typedef struct {
     bool     pend;
     uint8_t  pend_sk[PSU_KEY_LEN];
     uint8_t  pend_nc[PSU_NONCE_LEN], pend_nn[PSU_NONCE_LEN];
+    uint32_t pend_rx_ms;     // 最後一次收到 SH1 的時間
     bool     send_reply;
 } psu_sess_t;
 
@@ -96,8 +98,10 @@ void psu_sess_rekey(psu_sess_t *s, uint32_t now_ms);
 // 控制板呼叫無作用。
 void psu_sess_kick(psu_sess_t *s, uint32_t now_ms);
 
-// 節點：握手進行中（收到 SH1、還在等 SH3）。這時不要換頻道
-bool psu_sess_handshaking(const psu_sess_t *s);
+// 節點：握手進行中（PSU_SESS_HS_HOLD_MS 內收到過 SH1、還在等 SH3）。這時不要換頻道。
+// 有時間上限（2026-10-20）：只看「收到過 SH1」的話，SH3 沒來（控制板換了頻道、或只從隔壁頻道
+// 漏過來一則）節點就永遠停在原地不找了。SH2 → SH3 只要一次往返，500 ms 很夠
+bool psu_sess_handshaking(const psu_sess_t *s, uint32_t now_ms);
 
 // 餵進解碼後的 PSU_SESS_PLAIN 訊息。是握手訊息就處理並回傳 true。
 bool psu_sess_rx(psu_sess_t *s, const psu_msg_t *m, uint32_t now_ms);
