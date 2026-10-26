@@ -120,6 +120,12 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_str(&w, "CHN,");
         put_uint(&w, msg->u.channel.channel);
         break;
+    case PSU_MSG_NETWORK:
+        if (msg->u.network.ssid_len < 1 || msg->u.network.ssid_len > PSU_SSID_MAX) return 0;
+        put_str(&w, "NET,");
+        put_bytes(&w, msg->u.network.bssid, 6); put_char(&w, ',');
+        put_bytes(&w, msg->u.network.ssid, msg->u.network.ssid_len);
+        break;
     case PSU_MSG_PAIR_KEY:
         put_str(&w, "PKH,");
         put_uint(&w, msg->u.pair_key.proto_ver); put_char(&w, ',');
@@ -377,6 +383,15 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
         if (nf != 2 || !parse_uint(&f[1], 14u, &a) || a < 1) return PSU_LINK_BAD_FIELDS;
         out->type = PSU_MSG_CHANNEL;
         out->u.channel.channel = (uint8_t)a;
+
+    } else if (tok_eq(&f[0], "NET")) {
+        size_t sl = f[2].n / 2;
+        if (nf != 3 || !parse_bytes(&f[1], out->u.network.bssid, 6) ||
+            (f[2].n % 2) != 0 || sl < 1 || sl > PSU_SSID_MAX ||
+            !parse_bytes(&f[2], out->u.network.ssid, sl))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.network.ssid_len = (uint8_t)sl;
+        out->type = PSU_MSG_NETWORK;
 
     } else if (tok_eq(&f[0], "PKH")) {
         if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||

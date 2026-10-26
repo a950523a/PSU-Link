@@ -29,6 +29,14 @@
 //
 //   控制板 → 節點   $CHN,<ch>                                   控制板目前的 WiFi 頻道（2026-10-18，ESP-NOW 用）；
 //                                                               連線後與每 5 s 送一次，節點不在這個頻道就切過去
+//   控制板 → 節點   $NET,<bssid>,<ssid>                         控制板目前所在的網路（2026-10-26，ESP-NOW 用）：
+//                                                               連著路由器時是那台基地台，只開熱點時是自己的熱點。
+//                                                               bssid 6 B、ssid 1–32 B，都寫成大寫十六進位。
+//                                                               有變化時與每 30 s 送一次
+//
+//   NET：節點記下來，下次斷線或開機時先掃描一次 WiFi，看那個網路在哪個頻道就直接切過去，
+//   不必一個頻道一個頻道試、等握手碰運氣。先比 BSSID（mesh 網路同名的基地台可能在不同頻道），
+//   找不到再比 SSID。SSID 本來就是公開廣播的；這則訊息跟其他一般訊息一樣帶驗證尾碼。
 //
 //   CHN：ESP-NOW 只收得到同一個頻道的封包，但隔壁頻道會漏過來一部分 —— 節點停在 8、控制板在 9 時，
 //   握手照樣成功、之後時通時斷，節點的「連續送不出去才重找」也一直被偶爾的成功歸零。
@@ -141,6 +149,7 @@ typedef enum {
     PSU_MSG_SESS_REQUEST = 14,   // SHR
     PSU_MSG_POWER        = 15,   // PWR
     PSU_MSG_CHANNEL      = 16,   // CHN
+    PSU_MSG_NETWORK      = 17,   // NET
 } psu_msg_type_t;
 
 typedef struct {
@@ -181,6 +190,13 @@ typedef struct {
     uint8_t  channel;       // 1–14
 } psu_msg_channel_t;
 
+#define PSU_SSID_MAX 32u
+typedef struct {
+    uint8_t  bssid[6];
+    uint8_t  ssid_len;      // 1–PSU_SSID_MAX
+    uint8_t  ssid[PSU_SSID_MAX];   // 不一定是可印字元，也不以 NUL 結尾
+} psu_msg_network_t;
+
 typedef struct {
     uint16_t vac_dv;        // AC 輸入電壓，0.1 V；0 = 還沒讀到
     uint16_t pmax_w;        // 節點現在能給的最大 DC 輸出功率，W；0 = 不知道（控制板照舊不限）
@@ -207,6 +223,7 @@ typedef struct {
         psu_msg_ack_t    ack;
         psu_msg_power_t  power;
         psu_msg_channel_t channel;
+        psu_msg_network_t network;
         psu_msg_pair_key_t     pair_key;
         psu_msg_pair_commit_t  pair_commit;
         psu_msg_pair_nonce_t   pair_nonce;

@@ -147,6 +147,40 @@ static void test_channel(void)
     CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
 }
 
+static void test_network(void)
+{
+    char buf[PSU_LINK_MAX_LINE], expect[PSU_LINK_MAX_LINE];
+    psu_msg_t in = { .type = PSU_MSG_NETWORK }, out;
+    const uint8_t bssid[6] = { 0xA0, 0x1B, 0x2C, 0x3D, 0x4E, 0x5F };
+    memcpy(in.u.network.bssid, bssid, 6);
+    memcpy(in.u.network.ssid, "Home,5G", 7);          // 逗號也沒關係：十六進位
+    in.u.network.ssid_len = 7;
+    size_t n = psu_link_encode(&in, buf, sizeof buf);
+    frame("NET,A01B2C3D4E5F,486F6D652C3547", expect, sizeof expect);
+    CHECK(n == strlen(expect) && strcmp(buf, expect) == 0);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_NETWORK &&
+          out.u.network.ssid_len == 7 && memcmp(out.u.network.ssid, "Home,5G", 7) == 0 &&
+          memcmp(out.u.network.bssid, bssid, 6) == 0);
+    // 最長的 SSID（32 B）加上驗證尾碼也放得下
+    memset(in.u.network.ssid, 0xE5, PSU_SSID_MAX);
+    in.u.network.ssid_len = PSU_SSID_MAX;
+    n = psu_link_encode(&in, buf, sizeof buf);
+    CHECK(n > 0 && n + 26u < PSU_LINK_MAX_AUTH_LINE);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.u.network.ssid_len == PSU_SSID_MAX);
+    in.u.network.ssid_len = 0;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    in.u.network.ssid_len = PSU_SSID_MAX + 1;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    frame("NET,A01B2C3D4E5F,", expect, sizeof expect);            // 空 SSID
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("NET,A01B2C3D4E,486F6D65", expect, sizeof expect);       // BSSID 太短
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("NET,A01B2C3D4E5F,486F6D6", expect, sizeof expect);      // 奇數個 hex
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("NET,A01B2C3D4E5F", expect, sizeof expect);              // 少一欄
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+}
+
 static void test_set_partial(void)
 {
     char buf[PSU_LINK_MAX_LINE];
@@ -265,6 +299,7 @@ int main(void)
     test_golden();
     test_power();
     test_channel();
+    test_network();
     test_roundtrip();
     test_set_partial();
     test_not_frame();
