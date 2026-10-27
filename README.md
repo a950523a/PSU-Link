@@ -67,6 +67,26 @@ A node is described by what it declares in `CAP`, not by brand: a controllable r
 interface (reports V/I, accepts nothing). Field meanings and bit definitions are in
 [`include/psu_link/psu_link.h`](include/psu_link/psu_link.h).
 
+## Planned: updating a node's firmware through the controller (not implemented)
+
+Decided 2026-10-27, nothing written yet. The controller downloads a node's firmware and passes it down
+the link it already has, so a node needs no network of its own. Same messages over UART and ESP-NOW;
+on ESP-NOW each one carries the authentication tag like every other line.
+
+- A node that can be updated says so in `CAP` (a new capability bit). Draft messages: `FWB` (begin:
+  size, SHA-256, image name, version) → `FWD,<offset>,<hex data>` chunks, each answered by `FWA,<offset>,
+  <result>` → `FWE` (the node checks the SHA-256 and that the image is its own, then switches) /
+  `FWX` (abort). Offsets make it resumable after a dropped link.
+- **A power node keeps its output on throughout** — the controller may be running from it, so turning
+  the output off (or letting it drop) would cut the controller mid-update. The node writes flash while
+  it keeps regulating, reboots into the new image and takes over the running output without switching
+  it off (a node that finds its supply already running at boot adopts it).
+- The controller only starts an update while it is not charging, and shows progress the same way as its
+  own update.
+- Interrupted or bad image → the node keeps running its current firmware. A node with two image slots
+  gets that for free; a small MCU with a single image keeps a resident bootloader that is never updated
+  itself, so a failed transfer can always be retried.
+
 ## Pairing and link authentication (ESP-NOW)
 
 UART is a wire; ESP-NOW is radio, where anyone in range can transmit. Two layers
