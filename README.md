@@ -87,6 +87,24 @@ on ESP-NOW each one carries the authentication tag like every other line.
   gets that for free; a small MCU with a single image keeps a resident bootloader that is never updated
   itself, so a failed transfer can always be retried.
 
+## Planned: the controller switches the node's output (not implemented)
+
+Decided 2026-10-27. Only for a controller with its **own** supply — today the TES usually runs from the
+node's output, and switching that off powers the controller down. Default stays as now: the node keeps its
+output on and the controller never switches it.
+
+- A node that can be switched declares a new capability bit; draft message `OUT,<seq>,<0|1>` → `ACK`.
+- **Charge sequence, like a public DC fast charger:** idle = output off. At the start of a session the
+  controller sets voltage (to the vehicle's battery voltage) and a low current, switches the output on,
+  waits until the reported voltage is there (with a timeout), and only then closes its output contactor;
+  at the end it opens the contactor, then switches the output off. The node's limits come from `CAP` and
+  `PWR`, as now.
+- **Dead-man on the node:** after an `OUT,0`, if the controller's link goes quiet within a few seconds, the
+  node assumes the controller was running from it, switches its output back on and drops out of switched
+  mode (and says so). A wrong setting then costs a reboot, not a dead controller that only a button press
+  on the node can bring back. The controller keeps the link alive while the output is off.
+- A node in switched mode remembers it, so after its own reboot it stays off instead of switching on.
+
 ## Pairing and link authentication (ESP-NOW)
 
 UART is a wire; ESP-NOW is radio, where anyone in range can transmit. Two layers
