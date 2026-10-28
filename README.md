@@ -83,6 +83,22 @@ on ESP-NOW each one carries the authentication tag like every other line.
   it off (a node that finds its supply already running at boot adopts it).
 - The controller only starts an update while it is not charging, and shows progress the same way as its
   own update.
+- **Every node update can be uploaded by hand to the controller, which relays it** (decided 2026-10-28).
+  Fetching a release over the internet is an extra path for nodes whose images are published; a node
+  whose images are not published is updated only this way. The controller accepts the file, checks its
+  header against the connected node (below) before sending anything, and relays it with the same
+  `FWB`/`FWD`/`FWE` messages.
+- **Node identity, `INF`** (draft, decided 2026-10-28). `CAP` says what a node can do, not which hardware
+  and build it is — its `<fw>` is a 16-bit number in the node's own format, which cannot hold a build like
+  `v1.4.0-8-g9b60735`. A node that implements `INF` sends it right after `CAP` (at boot and on `HELO`):
+  `$INF,<hw>,<fw_str>,<boot>,<uid>` — hardware revision (integer, per node type; the node knows it from its
+  build, a board-ID strap, or a value written at production), full firmware version string, bootloader
+  version (empty for a node without a separate bootloader), and a unique id (MAC or chip id, hex). `CAP`
+  stays unchanged, so an old node that never sends `INF` still works and is shown as "version unknown".
+- **Image header.** An update image starts with a small header: node type, the range of hardware revisions
+  it runs on, version string, size and SHA-256. The controller refuses a file whose type or hardware range
+  does not match the connected node's `CAP`/`INF` before sending a byte; the node checks the same fields
+  again in `FWB` and the SHA-256 at `FWE`, and refuses anything that is not its own.
 - Interrupted or bad image → the node keeps running its current firmware. A node with two image slots
   gets that for free; a small MCU with a single image keeps a resident bootloader that is never updated
   itself, so a failed transfer can always be retried.
