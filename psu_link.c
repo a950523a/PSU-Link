@@ -66,6 +66,22 @@ static void put_bytes(writer_t *w, const uint8_t *b, size_t n)
     for (size_t i = 0; i < n; i++) put_hex(w, b[i], 2);
 }
 
+// INF 的版本字串：只能是 A–Z a–z 0–9 . _ + -（不會撞到 , * $ ~），長度 0–max
+static bool ver_char_ok(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           c == '.' || c == '_' || c == '+' || c == '-';
+}
+
+static bool ver_str_ok(const char *s, size_t max)
+{
+    size_t n = 0;
+    for (; s[n]; n++) {
+        if (n >= max || !ver_char_ok(s[n])) return false;
+    }
+    return true;
+}
+
 size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
 {
     if (!msg || !buf || buf_size < 2) return 0;
@@ -125,6 +141,15 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_str(&w, "NET,");
         put_bytes(&w, msg->u.network.bssid, 6); put_char(&w, ',');
         put_bytes(&w, msg->u.network.ssid, msg->u.network.ssid_len);
+        break;
+    case PSU_MSG_INFO:
+        if (!ver_str_ok(msg->u.info.fw, PSU_VER_STR_MAX) || !ver_str_ok(msg->u.info.boot, PSU_BOOT_STR_MAX) ||
+            msg->u.info.uid_len < 1 || msg->u.info.uid_len > PSU_UID_MAX) return 0;
+        put_str(&w, "INF,");
+        put_uint(&w, msg->u.info.hw_rev);    put_char(&w, ',');
+        put_str(&w, msg->u.info.fw);         put_char(&w, ',');
+        put_str(&w, msg->u.info.boot);       put_char(&w, ',');
+        put_bytes(&w, msg->u.info.uid, msg->u.info.uid_len);
         break;
     case PSU_MSG_PAIR_KEY:
         put_str(&w, "PKH,");
@@ -264,6 +289,18 @@ static bool parse_bytes(const field_t *f, uint8_t *out, size_t n)
     return true;
 }
 
+// INF 的版本字串欄位 → NUL 結尾字串（可以是空的）
+static bool parse_ver(const field_t *f, char *out, size_t max)
+{
+    if (f->n > max) return false;
+    for (size_t i = 0; i < f->n; i++) {
+        if (!ver_char_ok(f->p[i])) return false;
+        out[i] = f->p[i];
+    }
+    out[f->n] = '\0';
+    return true;
+}
+
 static bool parse_role(const field_t *f, uint8_t *role)
 {
     uint32_t r;
@@ -392,6 +429,17 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
             return PSU_LINK_BAD_FIELDS;
         out->u.network.ssid_len = (uint8_t)sl;
         out->type = PSU_MSG_NETWORK;
+
+    } else if (tok_eq(&f[0], "INF")) {
+        size_t ul = f[4].n / 2;
+        if (nf != 5 || !parse_uint(&f[1], 65535u, &a) ||
+            !parse_ver(&f[2], out->u.info.fw, PSU_VER_STR_MAX) ||
+            !parse_ver(&f[3], out->u.info.boot, PSU_BOOT_STR_MAX) ||
+            (f[4].n % 2) != 0 || ul < 1 || ul > PSU_UID_MAX || !parse_bytes(&f[4], out->u.info.uid, ul))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.info.hw_rev  = (uint16_t)a;
+        out->u.info.uid_len = (uint8_t)ul;
+        out->type = PSU_MSG_INFO;
 
     } else if (tok_eq(&f[0], "PKH")) {
         if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||

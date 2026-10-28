@@ -52,6 +52,59 @@ static void test_golden(void)
     printf("  golden ST: %s", buf);
 }
 
+static void test_info(void)
+{
+    char buf[PSU_LINK_MAX_LINE], expect[PSU_LINK_MAX_LINE];
+    psu_msg_t in = { .type = PSU_MSG_INFO }, out;
+    const uint8_t mac[6] = { 0x24, 0x6F, 0x28, 0xAB, 0xCD, 0xEF };
+    in.u.info.hw_rev = 1;
+    strcpy(in.u.info.fw, "v1.4.0-8-g9b60735");
+    in.u.info.boot[0] = '\0';                        // 沒有獨立開機程式
+    memcpy(in.u.info.uid, mac, 6);
+    in.u.info.uid_len = 6;
+    size_t n = psu_link_encode(&in, buf, sizeof buf);
+    frame("INF,1,v1.4.0-8-g9b60735,,246F28ABCDEF", expect, sizeof expect);
+    CHECK(n == strlen(expect) && strcmp(buf, expect) == 0);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_INFO && out.u.info.hw_rev == 1 &&
+          strcmp(out.u.info.fw, "v1.4.0-8-g9b60735") == 0 && out.u.info.boot[0] == '\0' &&
+          out.u.info.uid_len == 6 && memcmp(out.u.info.uid, mac, 6) == 0);
+    // 最長的版本字串＋開機程式＋8 B 識別碼，加上驗證尾碼也放得下
+    in.u.info.hw_rev = 65535;
+    memset(in.u.info.fw, 'a', PSU_VER_STR_MAX);   in.u.info.fw[PSU_VER_STR_MAX] = '\0';
+    memset(in.u.info.boot, 'b', PSU_BOOT_STR_MAX); in.u.info.boot[PSU_BOOT_STR_MAX] = '\0';
+    in.u.info.uid_len = PSU_UID_MAX;
+    n = psu_link_encode(&in, buf, sizeof buf);
+    CHECK(n > 0 && n + 26u < PSU_LINK_MAX_AUTH_LINE);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && strlen(out.u.info.fw) == PSU_VER_STR_MAX &&
+          strlen(out.u.info.boot) == PSU_BOOT_STR_MAX && out.u.info.uid_len == PSU_UID_MAX);
+    // 版本字串太長、有不允許的字元（會撞到分隔符號）、識別碼長度不對 → 不編碼
+    strcpy(in.u.info.boot, "");
+    memset(in.u.info.fw, 'a', PSU_VER_STR_MAX + 1); in.u.info.fw[PSU_VER_STR_MAX + 1] = '\0';
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    strcpy(in.u.info.fw, "v1.0,x");
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    strcpy(in.u.info.fw, "v1.0 beta");
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    strcpy(in.u.info.fw, "v1.0");
+    in.u.info.uid_len = 0;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    in.u.info.uid_len = PSU_UID_MAX + 1;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    // 解碼端一樣擋
+    frame("INF,1,v1.0,,", expect, sizeof expect);                 // 沒有識別碼
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("INF,1,v1.0,,ABC", expect, sizeof expect);              // 奇數個十六進位字
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("INF,65536,v1.0,,AB", expect, sizeof expect);           // 硬體版本超過 16 位元
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("INF,1,v1.0 x,,AB", expect, sizeof expect);             // 空白不允許
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("INF,1,v1.0,,AB,9", expect, sizeof expect);             // 多一個欄位
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("INF,0,,,AB", expect, sizeof expect);                   // 全部都不知道也合法
+    CHECK(dec(expect, &out) == PSU_LINK_OK && out.u.info.fw[0] == '\0' && out.u.info.uid_len == 1);
+}
+
 static void test_roundtrip(void)
 {
     char buf[PSU_LINK_MAX_LINE];
@@ -300,6 +353,7 @@ int main(void)
     test_power();
     test_channel();
     test_network();
+    test_info();
     test_roundtrip();
     test_set_partial();
     test_not_frame();

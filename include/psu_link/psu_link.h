@@ -34,6 +34,16 @@
 //                                                               bssid 6 B、ssid 1–32 B，都寫成大寫十六進位。
 //                                                               有變化時與每 30 s 送一次
 //
+//   節點 → 控制板   $INF,<hw>,<fw>,<boot>,<uid>                 節點身分（2026-10-28）：緊接在 CAP 之後送。
+//                                                               硬體版本（十進位，節點類型自己編）、完整韌體版本
+//                                                               字串、開機程式版本（沒有獨立開機程式就留空）、
+//                                                               識別碼（MAC 或晶片 ID，1–8 B 十六進位）
+//
+//   INF：CAP 只說節點「能做什麼」，<fw> 也只是節點自訂的 16 位元整數，裝不下 v1.4.0-8-g9b60735
+//   這種版本。控制板要顯示接了什麼、判斷更新檔是不是這台的，就看 INF。CAP 格式不變：
+//   不送 INF 的舊節點照常運作，控制板顯示「版本未知」。版本字串只允許 A–Z a–z 0–9 . _ + -
+//   （不會撞到 , * $ ~），最長 PSU_VER_STR_MAX。
+//
 //   NET：節點記下來，下次斷線或開機時先掃描一次 WiFi，看那個網路在哪個頻道就直接切過去，
 //   不必一個頻道一個頻道試、等握手碰運氣。先比 BSSID（mesh 網路同名的基地台可能在不同頻道），
 //   找不到再比 SSID。SSID 本來就是公開廣播的；這則訊息跟其他一般訊息一樣帶驗證尾碼。
@@ -150,6 +160,7 @@ typedef enum {
     PSU_MSG_POWER        = 15,   // PWR
     PSU_MSG_CHANNEL      = 16,   // CHN
     PSU_MSG_NETWORK      = 17,   // NET
+    PSU_MSG_INFO         = 18,   // INF
 } psu_msg_type_t;
 
 typedef struct {
@@ -197,6 +208,17 @@ typedef struct {
     uint8_t  ssid[PSU_SSID_MAX];   // 不一定是可印字元，也不以 NUL 結尾
 } psu_msg_network_t;
 
+#define PSU_VER_STR_MAX  31u   // INF 的版本字串最長字元數（不含 NUL）
+#define PSU_BOOT_STR_MAX 15u
+#define PSU_UID_MAX       8u
+typedef struct {
+    uint16_t hw_rev;                         // 硬體版本，0–65535，各節點類型自己編號
+    char     fw[PSU_VER_STR_MAX + 1];        // 完整韌體版本，NUL 結尾；空字串 = 不知道
+    char     boot[PSU_BOOT_STR_MAX + 1];     // 開機程式版本，NUL 結尾；空字串 = 沒有獨立開機程式
+    uint8_t  uid_len;                        // 1–PSU_UID_MAX
+    uint8_t  uid[PSU_UID_MAX];
+} psu_msg_info_t;
+
 typedef struct {
     uint16_t vac_dv;        // AC 輸入電壓，0.1 V；0 = 還沒讀到
     uint16_t pmax_w;        // 節點現在能給的最大 DC 輸出功率，W；0 = 不知道（控制板照舊不限）
@@ -224,6 +246,7 @@ typedef struct {
         psu_msg_power_t  power;
         psu_msg_channel_t channel;
         psu_msg_network_t network;
+        psu_msg_info_t   info;
         psu_msg_pair_key_t     pair_key;
         psu_msg_pair_commit_t  pair_commit;
         psu_msg_pair_nonce_t   pair_nonce;

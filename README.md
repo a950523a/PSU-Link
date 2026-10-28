@@ -39,6 +39,7 @@ $<TYPE>,<field>,...*<CRC16>\n
 
 | controller → node | `$CHN,<ch>` | The controller's WiFi channel (ESP-NOW only): sent once linked and every 5 s; a node on another channel moves to it |
 | controller → node | `$NET,<bssid>,<ssid>` | The network the controller is on (ESP-NOW only): its router's access point, or its own hotspot. BSSID 6 B and SSID 1–32 B, both upper-case hex. Sent on change and every 30 s |
+| node → controller | `$INF,<hw>,<fw>,<boot>,<uid>` | Node identity (2026-10-28): sent right after `CAP`. Hardware revision (decimal, numbered per node type), full firmware version string, bootloader version (empty without a separate bootloader), unique id (MAC or chip id, 1–8 B upper-case hex). Version strings use only `A–Z a–z 0–9 . _ + -`, firmware ≤ 31 and bootloader ≤ 15 characters. Optional: a node that never sends it still works and shows as "version unknown" |
 
 Why `CHN`: ESP-NOW only hears its own channel, but part of the traffic on an adjacent channel leaks
 through. A node parked on 8 while the controller is on 9 still completes the handshake and then
@@ -88,7 +89,7 @@ on ESP-NOW each one carries the authentication tag like every other line.
   whose images are not published is updated only this way. The controller accepts the file, checks its
   header against the connected node (below) before sending anything, and relays it with the same
   `FWB`/`FWD`/`FWE` messages.
-- **Node identity, `INF`** (draft, decided 2026-10-28). `CAP` says what a node can do, not which hardware
+- **Node identity, `INF`** (decided 2026-10-28; **encoded and decoded by this library since then**, see the message table). `CAP` says what a node can do, not which hardware
   and build it is — its `<fw>` is a 16-bit number in the node's own format, which cannot hold a build like
   `v1.4.0-8-g9b60735`. A node that implements `INF` sends it right after `CAP` (at boot and on `HELO`):
   `$INF,<hw>,<fw_str>,<boot>,<uid>` — hardware revision (integer, per node type; the node knows it from its
