@@ -68,16 +68,29 @@ A node is described by what it declares in `CAP`, not by brand: a controllable r
 interface (reports V/I, accepts nothing). Field meanings and bit definitions are in
 [`include/psu_link/psu_link.h`](include/psu_link/psu_link.h).
 
-## Planned: updating a node's firmware through the controller (not implemented)
+## Updating a node's firmware through the controller
 
-Decided 2026-10-27, nothing written yet. The controller downloads a node's firmware and passes it down
-the link it already has, so a node needs no network of its own. Same messages over UART and ESP-NOW;
-on ESP-NOW each one carries the authentication tag like every other line.
+Decided 2026-10-27; **the messages and both state machines are implemented since 2026-10-28** (`psu_fw.h`,
+host-tested over a lossy link); the node and controller sides are being built. The controller passes the image
+down the link it already has, so a node needs no network of its own. Same messages over UART and ESP-NOW; on
+ESP-NOW each one carries the authentication tag like every other line. `PSU_LINK_MAX_LINE` went from 96 to 224
+for this: one `FWD` carries 96 bytes, and with the tag it still fits one 250-byte ESP-NOW packet.
 
-- A node that can be updated says so in `CAP` (a new capability bit). Draft messages: `FWB` (begin:
-  size, SHA-256, image name, version) → `FWD,<offset>,<hex data>` chunks, each answered by `FWA,<offset>,
-  <result>` → `FWE` (the node checks the SHA-256 and that the image is its own, then switches) /
-  `FWX` (abort). Offsets make it resumable after a dropped link.
+| Direction | Message | Purpose |
+|-----------|---------|---------|
+| controller → node | `$FWB,<size>,<sha256>,<name>,<ver>` | Begin: image size, SHA-256 (32 B hex), image name (ESP-IDF `project_name`, the node refuses one that is not its own) and version |
+| controller → node | `$FWD,<offset>,<data>` | One chunk, 1–96 bytes in hex |
+| controller → node | `$FWE` | All sent: the node checks the SHA-256 and the image, switches, answers `FWA`, then restarts |
+| node → controller | `$FWA,<offset>,<result>` | Answer to `FWB`/`FWD`/`FWE`: `<offset>` is the next position the node wants (`psu_fw_result_t`) |
+| either | `$FWX,<reason>` | Abort |
+
+One chunk at a time; the controller resends after 1 s (5 s for `FWB`) and gives up after 10 tries. A
+duplicate or out-of-order `FWD` is not written — the node answers with the offset it wants, which is also how
+a transfer resumes. A repeated `FWB` for the same image resumes instead of restarting. A node that hears
+nothing for 30 s drops the transfer. If the final `FWA` is lost and the node has already restarted, the
+controller reports "done, unconfirmed" and checks the node's version from its next `INF`.
+
+- A node that can be updated sets `PSU_CAP_FW_UPDATE` in `CAP`.
 - **A power node keeps its output on throughout** — the controller may be running from it, so turning
   the output off (or letting it drop) would cut the controller mid-update. The node writes flash while
   it keeps regulating, reboots into the new image and takes over the running output without switching
@@ -96,10 +109,11 @@ on ESP-NOW each one carries the authentication tag like every other line.
   build, a board-ID strap, or a value written at production), full firmware version string, bootloader
   version (empty for a node without a separate bootloader), and a unique id (MAC or chip id, hex). `CAP`
   stays unchanged, so an old node that never sends `INF` still works and is shown as "version unknown".
-- **Image header.** An update image starts with a small header: node type, the range of hardware revisions
-  it runs on, version string, size and SHA-256. The controller refuses a file whose type or hardware range
-  does not match the connected node's `CAP`/`INF` before sending a byte; the node checks the same fields
-  again in `FWB` and the SHA-256 at `FWE`, and refuses anything that is not its own.
+- **Which image is whose.** For an ESP-IDF node the image is its normal release `.bin`, no wrapper: the
+  controller reads the app descriptor inside it (`project_name`, version), refuses its own firmware, sends the
+  name in `FWB`, and the node refuses a name that is not its own before anything is written (it may check the
+  descriptor again in the first chunks). A small-MCU node without an app descriptor will define a header of its
+  own (node type, hardware-revision range, version) when it is built.
 - Interrupted or bad image → the node keeps running its current firmware. A node with two image slots
   gets that for free; a small MCU with a single image keeps a resident bootloader that is never updated
   itself, so a failed transfer can always be retried.
@@ -199,6 +213,9 @@ gcc -std=c99 -Wall -Wextra -Werror -Iinclude psu_link.c test/test_psu_link.c -o 
 
 gcc -std=c99 -Wall -Wextra -Werror -Iinclude psu_link.c psu_pair.c psu_sess.c test/test_psu_pair.c -o test_psu_pair
 ./test_psu_pair
+
+gcc -std=c99 -Wall -Wextra -Werror -Iinclude psu_link.c psu_fw.c test/test_psu_fw.c -o test_psu_fw
+./test_psu_fw
 ```
 
 `test_psu_pair` runs both ends over a simulated radio with random loss (0 / 30 / 50 %),

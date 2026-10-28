@@ -105,6 +105,82 @@ static void test_info(void)
     CHECK(dec(expect, &out) == PSU_LINK_OK && out.u.info.fw[0] == '\0' && out.u.info.uid_len == 1);
 }
 
+static void test_fw(void)
+{
+    char buf[PSU_LINK_MAX_LINE], expect[PSU_LINK_MAX_LINE];
+    psu_msg_t in, out;
+    size_t n;
+
+    // FWB：最長的名稱與版本，加上驗證尾碼也放得進一個 ESP-NOW 封包
+    memset(&in, 0, sizeof in);
+    in.type = PSU_MSG_FW_BEGIN;
+    in.u.fw_begin.size = 789024;
+    for (int i = 0; i < 32; i++) in.u.fw_begin.sha256[i] = (uint8_t)(0xA0 + i);
+    strcpy(in.u.fw_begin.name, "LianMing-PSU-Controller");
+    strcpy(in.u.fw_begin.ver, "v1.4.0-9-g0aea095");
+    n = psu_link_encode(&in, buf, sizeof buf);
+    CHECK(n > 0 && n + 26u < PSU_LINK_MAX_AUTH_LINE);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_FW_BEGIN && out.u.fw_begin.size == 789024 &&
+          memcmp(out.u.fw_begin.sha256, in.u.fw_begin.sha256, 32) == 0 &&
+          strcmp(out.u.fw_begin.name, "LianMing-PSU-Controller") == 0 &&
+          strcmp(out.u.fw_begin.ver, "v1.4.0-9-g0aea095") == 0);
+    memset(in.u.fw_begin.name, 'n', PSU_VER_STR_MAX); in.u.fw_begin.name[PSU_VER_STR_MAX] = '\0';
+    memset(in.u.fw_begin.ver, 'v', PSU_VER_STR_MAX);  in.u.fw_begin.ver[PSU_VER_STR_MAX] = '\0';
+    in.u.fw_begin.size = 0x7FFFFFFFu;
+    n = psu_link_encode(&in, buf, sizeof buf);
+    CHECK(n > 0 && n + 26u < PSU_LINK_MAX_AUTH_LINE);
+    in.u.fw_begin.name[0] = '\0';                                  // 沒有名稱：不送
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+
+    // FWD：一塊滿 PSU_FW_CHUNK，最大的 offset，加上驗證尾碼剛好放得進 ESP-NOW 封包（250 B）
+    memset(&in, 0, sizeof in);
+    in.type = PSU_MSG_FW_DATA;
+    in.u.fw_data.offset = 0x7FFFFFFFu;
+    in.u.fw_data.len = PSU_FW_CHUNK;
+    for (int i = 0; i < (int)PSU_FW_CHUNK; i++) in.u.fw_data.data[i] = (uint8_t)(i * 7);
+    n = psu_link_encode(&in, buf, sizeof buf);
+    CHECK(n > 0 && n + 26u < PSU_LINK_MAX_AUTH_LINE && n + 26u + 1u <= 250u);
+    printf("  longest FWD: %u bytes (+26 auth)\n", (unsigned)n);
+    CHECK(dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_FW_DATA && out.u.fw_data.offset == 0x7FFFFFFFu &&
+          out.u.fw_data.len == PSU_FW_CHUNK && memcmp(out.u.fw_data.data, in.u.fw_data.data, PSU_FW_CHUNK) == 0);
+    in.u.fw_data.offset = 96; in.u.fw_data.len = 2; in.u.fw_data.data[0] = 0xE9; in.u.fw_data.data[1] = 0x05;
+    psu_link_encode(&in, buf, sizeof buf);
+    frame("FWD,96,E905", expect, sizeof expect);
+    CHECK(strcmp(buf, expect) == 0);
+    in.u.fw_data.len = 0;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+    in.u.fw_data.len = PSU_FW_CHUNK + 1;
+    CHECK(psu_link_encode(&in, buf, sizeof buf) == 0);
+
+    // FWE、FWA、FWX
+    memset(&in, 0, sizeof in);
+    in.type = PSU_MSG_FW_END;
+    psu_link_encode(&in, buf, sizeof buf);
+    frame("FWE", expect, sizeof expect);
+    CHECK(strcmp(buf, expect) == 0 && dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_FW_END);
+    in.type = PSU_MSG_FW_ACK; in.u.fw_ack.offset = 192; in.u.fw_ack.result = PSU_FW_OFFSET;
+    psu_link_encode(&in, buf, sizeof buf);
+    frame("FWA,192,3", expect, sizeof expect);
+    CHECK(strcmp(buf, expect) == 0 && dec(buf, &out) == PSU_LINK_OK && out.type == PSU_MSG_FW_ACK &&
+          out.u.fw_ack.offset == 192 && out.u.fw_ack.result == PSU_FW_OFFSET);
+    in.type = PSU_MSG_FW_ABORT; in.u.fw_abort.reason = PSU_FW_HASH;
+    psu_link_encode(&in, buf, sizeof buf);
+    frame("FWX,5", expect, sizeof expect);
+    CHECK(strcmp(buf, expect) == 0 && dec(buf, &out) == PSU_LINK_OK && out.u.fw_abort.reason == PSU_FW_HASH);
+
+    // 解碼端擋掉格式不對的
+    frame("FWD,0,", expect, sizeof expect);                                    // 沒有資料
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("FWD,0,ABC", expect, sizeof expect);                                 // 奇數個 hex
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("FWE,1", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("FWA,10", expect, sizeof expect);
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+    frame("FWB,10,00,x,v1", expect, sizeof expect);                            // SHA-256 太短
+    CHECK(dec(expect, &out) == PSU_LINK_BAD_FIELDS);
+}
+
 static void test_roundtrip(void)
 {
     char buf[PSU_LINK_MAX_LINE];
@@ -354,6 +430,7 @@ int main(void)
     test_channel();
     test_network();
     test_info();
+    test_fw();
     test_roundtrip();
     test_set_partial();
     test_not_frame();

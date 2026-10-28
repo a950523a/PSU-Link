@@ -151,6 +151,33 @@ size_t psu_link_encode(const psu_msg_t *msg, char *buf, size_t buf_size)
         put_str(&w, msg->u.info.boot);       put_char(&w, ',');
         put_bytes(&w, msg->u.info.uid, msg->u.info.uid_len);
         break;
+    case PSU_MSG_FW_BEGIN:
+        if (!ver_str_ok(msg->u.fw_begin.name, PSU_VER_STR_MAX) || !msg->u.fw_begin.name[0] ||
+            !ver_str_ok(msg->u.fw_begin.ver, PSU_VER_STR_MAX)) return 0;
+        put_str(&w, "FWB,");
+        put_uint(&w, msg->u.fw_begin.size);      put_char(&w, ',');
+        put_bytes(&w, msg->u.fw_begin.sha256, 32); put_char(&w, ',');
+        put_str(&w, msg->u.fw_begin.name);      put_char(&w, ',');
+        put_str(&w, msg->u.fw_begin.ver);
+        break;
+    case PSU_MSG_FW_DATA:
+        if (msg->u.fw_data.len < 1 || msg->u.fw_data.len > PSU_FW_CHUNK) return 0;
+        put_str(&w, "FWD,");
+        put_uint(&w, msg->u.fw_data.offset);    put_char(&w, ',');
+        put_bytes(&w, msg->u.fw_data.data, msg->u.fw_data.len);
+        break;
+    case PSU_MSG_FW_END:
+        put_str(&w, "FWE");
+        break;
+    case PSU_MSG_FW_ACK:
+        put_str(&w, "FWA,");
+        put_uint(&w, msg->u.fw_ack.offset);     put_char(&w, ',');
+        put_uint(&w, msg->u.fw_ack.result);
+        break;
+    case PSU_MSG_FW_ABORT:
+        put_str(&w, "FWX,");
+        put_uint(&w, msg->u.fw_abort.reason);
+        break;
     case PSU_MSG_PAIR_KEY:
         put_str(&w, "PKH,");
         put_uint(&w, msg->u.pair_key.proto_ver); put_char(&w, ',');
@@ -440,6 +467,39 @@ psu_link_result_t psu_link_decode(const char *line, size_t len, psu_msg_t *out)
         out->u.info.hw_rev  = (uint16_t)a;
         out->u.info.uid_len = (uint8_t)ul;
         out->type = PSU_MSG_INFO;
+
+    } else if (tok_eq(&f[0], "FWB")) {
+        if (nf != 5 || !parse_uint(&f[1], 0x7FFFFFFFu, &a) || !parse_bytes(&f[2], out->u.fw_begin.sha256, 32) ||
+            !parse_ver(&f[3], out->u.fw_begin.name, PSU_VER_STR_MAX) || f[3].n == 0 ||
+            !parse_ver(&f[4], out->u.fw_begin.ver, PSU_VER_STR_MAX))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.fw_begin.size = a;
+        out->type = PSU_MSG_FW_BEGIN;
+
+    } else if (tok_eq(&f[0], "FWD")) {
+        size_t dl = f[2].n / 2;
+        if (nf != 3 || !parse_uint(&f[1], 0x7FFFFFFFu, &a) || (f[2].n % 2) != 0 || dl < 1 ||
+            dl > PSU_FW_CHUNK || !parse_bytes(&f[2], out->u.fw_data.data, dl))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.fw_data.offset = a;
+        out->u.fw_data.len    = (uint8_t)dl;
+        out->type = PSU_MSG_FW_DATA;
+
+    } else if (tok_eq(&f[0], "FWE")) {
+        if (nf != 1) return PSU_LINK_BAD_FIELDS;
+        out->type = PSU_MSG_FW_END;
+
+    } else if (tok_eq(&f[0], "FWA")) {
+        if (nf != 3 || !parse_uint(&f[1], 0x7FFFFFFFu, &a) || !parse_uint(&f[2], 255u, &b))
+            return PSU_LINK_BAD_FIELDS;
+        out->u.fw_ack.offset = a;
+        out->u.fw_ack.result = (uint8_t)b;
+        out->type = PSU_MSG_FW_ACK;
+
+    } else if (tok_eq(&f[0], "FWX")) {
+        if (nf != 2 || !parse_uint(&f[1], 255u, &a)) return PSU_LINK_BAD_FIELDS;
+        out->u.fw_abort.reason = (uint8_t)a;
+        out->type = PSU_MSG_FW_ABORT;
 
     } else if (tok_eq(&f[0], "PKH")) {
         if (nf != 4 || !parse_uint(&f[1], 255u, &a) ||

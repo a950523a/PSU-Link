@@ -8,14 +8,14 @@
 
 if(ESP_PLATFORM)
     idf_component_register(
-        SRCS "psu_link.c" "psu_pair.c" "psu_sess.c" "port/esp_idf/psu_crypto_mbedtls.c"
+        SRCS "psu_link.c" "psu_pair.c" "psu_sess.c" "psu_fw.c" "port/esp_idf/psu_crypto_mbedtls.c"
         INCLUDE_DIRS "include"
         PRIV_REQUIRES mbedtls esp_hw_support
     )
 else()
     cmake_minimum_required(VERSION 3.16)
     project(psu_link C)
-    add_library(psu_link STATIC psu_link.c psu_pair.c psu_sess.c)
+    add_library(psu_link STATIC psu_link.c psu_pair.c psu_sess.c psu_fw.c)
     target_include_directories(psu_link PUBLIC include)
     target_compile_features(psu_link PUBLIC c_std_99)
 endif()
